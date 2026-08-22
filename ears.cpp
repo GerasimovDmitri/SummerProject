@@ -5,6 +5,7 @@
 #include <set>
 #include <stack>
 #include <sstream>
+#include <SFML/Graphics.hpp>
 
 using namespace std;
 
@@ -260,7 +261,7 @@ vector<Point> triangulate(const vector<Point>& polygon) {
         }
 
         if (!earFound) {
-            cerr << "Предупреждение: ухо не найдено,завершение" << endl;
+            cerr << "Предупреждение: ухо не найдено, завершение" << endl;
             break;
         }
     }
@@ -316,14 +317,132 @@ void printTriangles(const vector<Point>& triangles) {
     cout << "Всего треугольников: " << triangles.size() / 3 << endl;
 }
 
-int main(int argc, char* argv[]) {
-    try {
-        if (argc < 7) {
-            cout << "Использование: " << argv[0] << " x1 y1 x2 y2 x3 y3 ..." << endl;
-            cout << "Пример: " << argv[0] << " 0 0 4 0 4 3 0 3" << endl;
-            return 1;
+void visualize(const vector<Point>& polygon, const vector<Point>& triangles) {
+    if (triangles.empty()) {
+        cerr << "Триангуляция пуста, визуализация невозможна" << endl;
+        return;
+    }
+
+    double minX = polygon[0].x, maxX = polygon[0].x;
+    double minY = polygon[0].y, maxY = polygon[0].y;
+    for (const Point& p : polygon) {
+        minX = min(minX, p.x);
+        maxX = max(maxX, p.x);
+        minY = min(minY, p.y);
+        maxY = max(maxY, p.y);
+    }
+
+    double margin = max(maxX - minX, maxY - minY) * 0.2 + 1.0;
+    minX -= margin;
+    maxX += margin;
+    minY -= margin;
+    maxY += margin;
+
+    const int WINDOW_WIDTH = 800;
+    const int WINDOW_HEIGHT = 600;
+
+    auto toScreenX = [&](double x) {
+        return (x - minX) / (maxX - minX) * (WINDOW_WIDTH - 40) + 20;
+    };
+    auto toScreenY = [&](double y) {
+        return (maxY - y) / (maxY - minY) * (WINDOW_HEIGHT - 40) + 20;
+    };
+
+    sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Triangulation Visualization");
+    
+    sf::Font font;
+    std::string fontPaths[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/arial/arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttf",
+        "/Windows/Fonts/arial.ttf"
+    };
+    
+    bool fontLoaded = false;
+    for (const auto& path : fontPaths) {
+        if (font.loadFromFile(path)) {
+            fontLoaded = true;
+            break;
+        }
+    }
+
+    while (window.isOpen()) {
+        sf::Event event;
+        while (window.pollEvent(event)) {
+            if (event.type == sf::Event::Closed)
+                window.close();
+            if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape)
+                window.close();
         }
 
+        window.clear(sf::Color::White);
+
+        for (size_t i = 0; i < triangles.size(); i += 3) {
+            Point p1 = triangles[i];
+            Point p2 = triangles[i + 1];
+            Point p3 = triangles[i + 2];
+
+            sf::ConvexShape triangle;
+            triangle.setPointCount(3);
+            triangle.setPoint(0, sf::Vector2f(toScreenX(p1.x), toScreenY(p1.y)));
+            triangle.setPoint(1, sf::Vector2f(toScreenX(p2.x), toScreenY(p2.y)));
+            triangle.setPoint(2, sf::Vector2f(toScreenX(p3.x), toScreenY(p3.y)));
+            triangle.setFillColor(sf::Color(200, 220, 255, 100));
+            triangle.setOutlineColor(sf::Color(50, 100, 200));
+            triangle.setOutlineThickness(1.5f);
+            window.draw(triangle);
+        }
+
+        for (size_t i = 0; i < polygon.size(); ++i) {
+            size_t j = (i + 1) % polygon.size();
+            sf::Vertex line[] = {
+                sf::Vertex(sf::Vector2f(toScreenX(polygon[i].x), toScreenY(polygon[i].y)), sf::Color::Red),
+                sf::Vertex(sf::Vector2f(toScreenX(polygon[j].x), toScreenY(polygon[j].y)), sf::Color::Red)
+            };
+            line[0].color = sf::Color::Red;
+            line[1].color = sf::Color::Red;
+            window.draw(line, 2, sf::Lines);
+        }
+
+        for (size_t i = 0; i < polygon.size(); ++i) {
+            const Point& p = polygon[i];
+            sf::CircleShape circle(6);
+            circle.setPosition(toScreenX(p.x) - 6, toScreenY(p.y) - 6);
+            circle.setFillColor(sf::Color::Red);
+            circle.setOutlineColor(sf::Color::Black);
+            circle.setOutlineThickness(1);
+            window.draw(circle);
+
+            if (fontLoaded) {
+                sf::Text text;
+                text.setFont(font);
+                text.setString(to_string(i));
+                text.setCharacterSize(14);
+                text.setFillColor(sf::Color::Black);
+                text.setPosition(toScreenX(p.x) + 8, toScreenY(p.y) - 8);
+                window.draw(text);
+            }
+        }
+        
+        if (fontLoaded) {
+            sf::Text info;
+            info.setFont(font);
+            info.setString("Vertices: " + to_string(polygon.size()) + 
+                          "  Triangles: " + to_string(triangles.size() / 3) +
+                          "\nESC - exit");
+            info.setCharacterSize(16);
+            info.setFillColor(sf::Color::Black);
+            info.setPosition(10, 10);
+            window.draw(info);
+        }
+
+        window.display();
+    }
+}
+
+int main(int argc, char* argv[]) {
+    try {
         vector<Point> polygon = readPointsFromArgs(argc, argv);
         string errorMsg;
 
@@ -340,6 +459,8 @@ int main(int argc, char* argv[]) {
 
         vector<Point> triangles = triangulate(polygon);
         printTriangles(triangles);
+        visualize(polygon, triangles);
+        
     } catch (const exception& e) {
         cerr << "Ошибка: " << e.what() << endl;
         return 1;
