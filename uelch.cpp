@@ -6,6 +6,7 @@
 #include <random>
 #include <chrono>
 #include <sstream>
+#include <SFML/Graphics.hpp>
 
 using namespace std;
 
@@ -449,6 +450,10 @@ public:
     const vector<Triangle>& getTriangles() const {
         return triangles;
     }
+    
+    const vector<Point>& getPoints() const {
+        return points;
+    }
 };
 
 DCEL buildVoronoiFromDelaunay(const vector<Triangle>& triangles) {
@@ -639,6 +644,172 @@ void printVoronoiEdges(const DCEL& dcel) {
     cout << "  Полуребер: " << dcel.halfEdges.size() << endl;
 }
 
+void visualize(const vector<Point>& points, const vector<Triangle>& triangles, const DCEL& dcel) {
+    if (triangles.empty()) {
+        cerr << "Триангуляция пуста, визуализация невозможна" << endl;
+        return;
+    }
+
+    double minX = points[0].x, maxX = points[0].x;
+    double minY = points[0].y, maxY = points[0].y;
+    for (const Point& p : points) {
+        minX = min(minX, p.x);
+        maxX = max(maxX, p.x);
+        minY = min(minY, p.y);
+        maxY = max(maxY, p.y);
+    }
+
+    double margin = max(maxX - minX, maxY - minY) * 0.3 + 2.0;
+    minX -= margin;
+    maxX += margin;
+    minY -= margin;
+    maxY += margin;
+
+    const int WINDOW_WIDTH = 1000;
+    const int WINDOW_HEIGHT = 700;
+
+    auto toScreenX = [&](double x) {
+        return (x - minX) / (maxX - minX) * (WINDOW_WIDTH - 40) + 20;
+    };
+    auto toScreenY = [&](double y) {
+        return (maxY - y) / (maxY - minY) * (WINDOW_HEIGHT - 40) + 20;
+    };
+
+    sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Delaunay Triangulation & Voronoi Diagram");
+    
+    sf::Font font;
+    std::string fontPaths[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/arial/arial.ttf",
+        "/System/Library/Fonts/Helvetica.ttf",
+        "/Windows/Fonts/arial.ttf"
+    };
+    
+    bool fontLoaded = false;
+    for (const auto& path : fontPaths) {
+        if (font.loadFromFile(path)) {
+            fontLoaded = true;
+            break;
+        }
+    }
+
+    while (window.isOpen()) {
+        sf::Event event;
+        while (window.pollEvent(event)) {
+            if (event.type == sf::Event::Closed)
+                window.close();
+            if (event.type == sf::Event::KeyPressed && event.key.code == sf::Keyboard::Escape)
+                window.close();
+        }
+
+        window.clear(sf::Color::White);
+
+        for (const auto& t : triangles) {
+            Point center = t.circumcircle.center;
+            double radius = t.circumcircle.radius;
+            
+            double screenRadius = radius * (WINDOW_WIDTH - 40) / (maxX - minX);
+            if (screenRadius < 5000) {
+                sf::CircleShape circle;
+                circle.setRadius(screenRadius);
+                circle.setPosition(toScreenX(center.x) - screenRadius, toScreenY(center.y) - screenRadius);
+                circle.setFillColor(sf::Color::Transparent);
+                circle.setOutlineColor(sf::Color(255, 200, 50, 100));
+                circle.setOutlineThickness(1.5f);
+                window.draw(circle);
+                
+                sf::CircleShape centerDot(3);
+                centerDot.setPosition(toScreenX(center.x) - 3, toScreenY(center.y) - 3);
+                centerDot.setFillColor(sf::Color(255, 200, 50));
+                centerDot.setOutlineColor(sf::Color(200, 150, 0));
+                centerDot.setOutlineThickness(1);
+                window.draw(centerDot);
+            }
+        }
+
+        for (const auto& t : triangles) {
+            sf::ConvexShape triangle;
+            triangle.setPointCount(3);
+            triangle.setPoint(0, sf::Vector2f(toScreenX(t.a.x), toScreenY(t.a.y)));
+            triangle.setPoint(1, sf::Vector2f(toScreenX(t.b.x), toScreenY(t.b.y)));
+            triangle.setPoint(2, sf::Vector2f(toScreenX(t.c.x), toScreenY(t.c.y)));
+            triangle.setFillColor(sf::Color(200, 220, 255, 80));
+            triangle.setOutlineColor(sf::Color(50, 100, 200));
+            triangle.setOutlineThickness(1.0f);
+            window.draw(triangle);
+        }
+
+        for (auto he : dcel.halfEdges) {
+            if (he->origin && he->twin && he->twin->origin) {
+                Point p1 = he->origin->point;
+                Point p2 = he->twin->origin->point;
+                
+                double len = sqrt(p1.dist2(p2));
+                double maxLen = 1000.0;
+                
+                Point p1_clip = p1;
+                Point p2_clip = p2;
+                
+                if (len > maxLen) {
+                    Point dir = p2 - p1;
+                    dir.x /= len;
+                    dir.y /= len;
+                    p2_clip = p1 + dir * maxLen;
+                }
+                
+                if (p2_clip.x < minX - 10 || p2_clip.x > maxX + 10 || 
+                    p2_clip.y < minY - 10 || p2_clip.y > maxY + 10) {
+                    continue;
+                }
+                
+                sf::Vertex line[] = {
+                    sf::Vertex(sf::Vector2f(toScreenX(p1.x), toScreenY(p1.y)), sf::Color(255, 0, 0, 150)),
+                    sf::Vertex(sf::Vector2f(toScreenX(p2_clip.x), toScreenY(p2_clip.y)), sf::Color(255, 0, 0, 150))
+                };
+                window.draw(line, 2, sf::Lines);
+            }
+        }
+
+        for (size_t i = 0; i < points.size(); ++i) {
+            const Point& p = points[i];
+            sf::CircleShape circle(7);
+            circle.setPosition(toScreenX(p.x) - 7, toScreenY(p.y) - 7);
+            circle.setFillColor(sf::Color::Red);
+            circle.setOutlineColor(sf::Color::Black);
+            circle.setOutlineThickness(1.5);
+            window.draw(circle);
+
+            if (fontLoaded) {
+                sf::Text text;
+                text.setFont(font);
+                text.setString(to_string(i));
+                text.setCharacterSize(14);
+                text.setFillColor(sf::Color::Black);
+                text.setPosition(toScreenX(p.x) + 10, toScreenY(p.y) - 8);
+                window.draw(text);
+            }
+        }
+        
+        if (fontLoaded) {
+            sf::Text info;
+            info.setFont(font);
+            info.setString("Points: " + to_string(points.size()) + 
+                          "  Triangles: " + to_string(triangles.size()) +
+                          "\nYellow circles - Circumcircles" +
+                          "\nRed lines - Voronoi edges" +
+                          "\nBlue - Delaunay triangles" +
+                          "\nESC - exit");
+            info.setCharacterSize(16);
+            info.setFillColor(sf::Color::Black);
+            info.setPosition(10, 10);
+            window.draw(info);
+        }
+
+        window.display();
+    }
+}
+
 int main(int argc, char* argv[]) {
     try {
         vector<Point> points;
@@ -686,6 +857,10 @@ int main(int argc, char* argv[]) {
 
         DCEL dcel = buildVoronoiFromDelaunay(triangles);
         printVoronoiEdges(dcel);
+        
+        cout << "\nЗапуск визуализации..." << endl;
+        visualize(points, triangles, dcel);
+        
     } catch (const exception& e) {
         cerr << "Ошибка: " << e.what() << endl;
         return 1;
