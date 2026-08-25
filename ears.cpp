@@ -34,6 +34,7 @@ struct Vertex {
     bool isConvex;
     bool isEar;
     list<Vertex*>::iterator earIt;
+    list<Vertex*>::iterator reflexIt;
 
     Vertex(const Point& pt, int idx) : p(pt), index(idx), prev(nullptr), next(nullptr),
                                         removed(false), isConvex(false), isEar(false) {}
@@ -171,6 +172,7 @@ private:
     Vertex* head;
     int remaining;
     list<Vertex*> earList;
+    list<Vertex*> reflexList;
 
     bool isConvex(Vertex* v) {
         return crossProduct(v->prev->p, v->p, v->next->p) >= -EPS;
@@ -190,8 +192,17 @@ private:
 
     void updateVertex(Vertex* v) {
         if (v->removed) return;
+        
+        bool wasConvex = v->isConvex;
         v->isConvex = isConvex(v);
         v->isEar = isEar(v);
+        
+        if (v->isConvex && !wasConvex) {
+            reflexList.erase(v->reflexIt);
+        } else if (!v->isConvex && wasConvex) {
+            reflexList.push_back(v);
+            v->reflexIt = --reflexList.end();
+        }
     }
 
     void addToEarList(Vertex* v) {
@@ -215,6 +226,10 @@ private:
 
         v->removed = true;
         removeFromEarList(v);
+        
+        if (!v->isConvex) {
+            reflexList.erase(v->reflexIt);
+        }
 
         if (head == v) {
             head = next;
@@ -232,11 +247,17 @@ private:
         addToEarList(next);
     }
 
-    void initializeEarList() {
+    void initializeLists() {
         Vertex* current = head;
         for (int i = 0; i < remaining; ++i) {
             current->isConvex = isConvex(current);
             current->isEar = isEar(current);
+            
+            if (!current->isConvex) {
+                reflexList.push_back(current);
+                current->reflexIt = --reflexList.end();
+            }
+            
             if (current->isEar) {
                 earList.push_back(current);
                 current->earIt = --earList.end();
@@ -270,7 +291,7 @@ public:
         vector<Point> triangles;
         if (remaining < 3) return triangles;
 
-        initializeEarList();
+        initializeLists();
 
         while (remaining > 3) {
             if (earList.empty()) {
