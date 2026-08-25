@@ -1,9 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
-#include <algorithm>
 #include <set>
-#include <stack>
 #include <sstream>
 #include <SFML/Graphics.hpp>
 
@@ -29,12 +27,15 @@ struct Point {
 
 struct Vertex {
     Point p;
+    int index;
     Vertex* prev;
     Vertex* next;
-    int index;
     bool removed;
     bool isConvex;
-    Vertex(const Point& pt, int idx) : p(pt), index(idx), prev(nullptr), next(nullptr), removed(false), isConvex(false) {}
+    bool isEar;
+
+    Vertex(const Point& pt, int idx) : p(pt), index(idx), prev(nullptr), next(nullptr),
+                                        removed(false), isConvex(false), isEar(false) {}
 };
 
 double crossProduct(const Point& a, const Point& b, const Point& c) {
@@ -54,10 +55,6 @@ bool isCounterClockwise(const vector<Point>& polygon) {
     return area > EPS;
 }
 
-bool isConvex(Vertex* v) {
-    return crossProduct(v->prev->p, v->p, v->next->p) >= -EPS;
-}
-
 bool pointInTriangle(const Point& p, const Point& a, const Point& b, const Point& c) {
     double d1 = crossProduct(a, b, p);
     double d2 = crossProduct(b, c, p);
@@ -67,29 +64,17 @@ bool pointInTriangle(const Point& p, const Point& a, const Point& b, const Point
     return !(hasNeg && hasPos);
 }
 
-bool isEar(Vertex* v) {
-    if (!isConvex(v)) return false;
-    Vertex* current = v->next->next;
-    while (current != v->prev) {
-        if (!current->removed && pointInTriangle(current->p, v->prev->p, v->p, v->next->p)) {
-            return false;
-        }
-        current = current->next;
-    }
-    return true;
-}
-
 bool segmentsIntersect(const Point& a, const Point& b, const Point& c, const Point& d) {
     double d1 = crossProduct(a, b, c);
     double d2 = crossProduct(a, b, d);
     double d3 = crossProduct(c, d, a);
     double d4 = crossProduct(c, d, b);
+
     if (fabs(d1) < EPS && fabs(d2) < EPS && fabs(d3) < EPS && fabs(d4) < EPS) {
         double min1x = min(a.x, b.x), max1x = max(a.x, b.x);
         double min1y = min(a.y, b.y), max1y = max(a.y, b.y);
         double min2x = min(c.x, d.x), max2x = max(c.x, d.x);
         double min2y = min(c.y, d.y), max2y = max(c.y, d.y);
-
         bool xOverlap = (min1x <= max2x + EPS && max1x >= min2x - EPS);
         bool yOverlap = (min1y <= max2y + EPS && max1y >= min2y - EPS);
         return xOverlap && yOverlap;
@@ -176,115 +161,151 @@ bool validatePolygon(vector<Point>& polygon, string& errorMsg) {
         reverse(polygon.begin(), polygon.end());
         cout << "Направление обхода автоматически изменено на против часовой стрелки" << endl;
     }
-
     return true;
 }
 
-vector<Point> triangulate(const vector<Point>& polygon) {
-    vector<Point> triangles;
-    int n = polygon.size();
-    if (n < 3) return triangles;
+class Triangulator {
+private:
+    vector<Vertex*> vertices;
+    Vertex* head;
+    int remaining;
+    set<Vertex*> convexSet;
+    set<Vertex*> reflexSet;
+    set<Vertex*> earSet;
 
-    vector<Vertex*> vertices(n);
-    for (int i = 0; i < n; ++i) {
-        vertices[i] = new Vertex(polygon[i], i);
+    bool isConvex(Vertex* v) {
+        return crossProduct(v->prev->p, v->p, v->next->p) >= -EPS;
     }
 
-    for (int i = 0; i < n; ++i) {
-        vertices[i]->prev = vertices[(i - 1 + n) % n];
-        vertices[i]->next = vertices[(i + 1) % n];
-    }
-
-    Vertex* head = vertices[0];
-    int remaining = n;
-
-    while (remaining > 3) {
-        bool earFound = false;
-        Vertex* current = head;
-        int attempts = 0;
-
-        do {
-            if (!current->removed && isEar(current)) {
-                Vertex* prev = current->prev;
-                Vertex* next = current->next;
-                triangles.push_back(prev->p);
-                triangles.push_back(current->p);
-                triangles.push_back(next->p);
-                prev->next = next;
-                next->prev = prev;
-                current->removed = true;
-                if (head == current) {
-                    head = next;
-                }
-                remaining--;
-                earFound = true;
-                break;
+    bool isEar(Vertex* v) {
+        if (!v->isConvex) return false;
+        Vertex* current = v->next->next;
+        while (current != v->prev) {
+            if (!current->removed && pointInTriangle(current->p, v->prev->p, v->p, v->next->p)) {
+                return false;
             }
             current = current->next;
-            attempts++;
-        } while (current != head && attempts < n * 2);
-
-        if (!earFound) {
-            current = head;
-            attempts = 0;
-            do {
-                if (!current->removed) {
-                    Vertex* prev = current->prev;
-                    Vertex* next = current->next;
-                    bool hasPoints = false;
-                    Vertex* test = next->next;
-                    while (test != prev) {
-                        if (!test->removed && pointInTriangle(test->p, prev->p, current->p, next->p)) {
-                            hasPoints = true;
-                            break;
-                        }
-                        test = test->next;
-                    }
-                    if (!hasPoints) {
-                        triangles.push_back(prev->p);
-                        triangles.push_back(current->p);
-                        triangles.push_back(next->p);
-                        prev->next = next;
-                        next->prev = prev;
-                        current->removed = true;
-                        if (head == current) {
-                            head = next;
-                        }
-                        remaining--;
-                        earFound = true;
-                        break;
-                    }
-                }
-                current = current->next;
-                attempts++;
-            } while (current != head && attempts < n * 2);
         }
+        return true;
+    }
 
-        if (!earFound) {
-            cerr << "Предупреждение: ухо не найдено, завершение" << endl;
-            break;
+    void updateVertex(Vertex* v) {
+        if (v->removed) return;
+        v->isConvex = isConvex(v);
+        v->isEar = isEar(v);
+
+        if (v->isEar) {
+            earSet.insert(v);
+        } else {
+            earSet.erase(v);
         }
     }
 
-    if (remaining == 3) {
-        Vertex* v1 = head;
-        Vertex* v2 = head->next;
-        Vertex* v3 = head->next->next;
-        if (!v1->removed && !v2->removed && !v3->removed) {
-            triangles.push_back(v1->p);
-            triangles.push_back(v2->p);
-            triangles.push_back(v3->p);
+    void removeVertex(Vertex* v) {
+        Vertex* prev = v->prev;
+        Vertex* next = v->next;
+
+        prev->next = next;
+        next->prev = prev;
+
+        v->removed = true;
+
+        if (head == v) {
+            head = next;
+        }
+
+        remaining--;
+
+        updateVertex(prev);
+        updateVertex(next);
+    }
+
+    void initializeSets() {
+        Vertex* current = head;
+        for (int i = 0; i < remaining; ++i) {
+            current->isConvex = isConvex(current);
+            if (current->isConvex) {
+                convexSet.insert(current);
+            } else {
+                reflexSet.insert(current);
+            }
+            current = current->next;
+        }
+
+        current = head;
+        for (int i = 0; i < remaining; ++i) {
+            current->isEar = isEar(current);
+            if (current->isEar) {
+                earSet.insert(current);
+            }
+            current = current->next;
         }
     }
 
-    Vertex* current = head;
-    for (int i = 0; i < remaining; ++i) {
-        Vertex* next = current->next;
-        delete current;
-        current = next;
+public:
+    Triangulator(const vector<Point>& polygon) {
+        int n = polygon.size();
+        vertices.resize(n);
+        for (int i = 0; i < n; ++i) {
+            vertices[i] = new Vertex(polygon[i], i);
+        }
+        for (int i = 0; i < n; ++i) {
+            vertices[i]->prev = vertices[(i - 1 + n) % n];
+            vertices[i]->next = vertices[(i + 1) % n];
+        }
+        head = vertices[0];
+        remaining = n;
     }
-    return triangles;
-}
+
+    ~Triangulator() {
+        for (Vertex* v : vertices) {
+            delete v;
+        }
+    }
+
+    vector<Point> triangulate() {
+        vector<Point> triangles;
+        if (remaining < 3) return triangles;
+
+        initializeSets();
+
+        while (remaining > 3) {
+            if (earSet.empty()) {
+                cerr << "Предупреждение: ухо не найдено, завершение" << endl;
+                break;
+            }
+
+            Vertex* ear = *earSet.begin();
+            earSet.erase(earSet.begin());
+
+            if (ear->removed || !ear->isEar) {
+                continue;
+            }
+
+            Vertex* prev = ear->prev;
+            Vertex* next = ear->next;
+
+            triangles.push_back(prev->p);
+            triangles.push_back(ear->p);
+            triangles.push_back(next->p);
+
+            removeVertex(ear);
+        }
+
+        if (remaining == 3) {
+            Vertex* v1 = head;
+            Vertex* v2 = head->next;
+            Vertex* v3 = head->next->next;
+            if (!v1->removed && !v2->removed && !v3->removed) {
+                triangles.push_back(v1->p);
+                triangles.push_back(v2->p);
+                triangles.push_back(v3->p);
+            }
+        }
+
+        return triangles;
+    }
+};
 
 vector<Point> readPointsFromArgs(int argc, char* argv[]) {
     vector<Point> points;
@@ -339,7 +360,7 @@ void visualize(const vector<Point>& polygon, const vector<Point>& triangles) {
     maxY += margin;
 
     const int WINDOW_WIDTH = 800;
-    const int WINDOW_HEIGHT = 600;
+    const int WINDOW_HEIGHT = 800;
 
     auto toScreenX = [&](double x) {
         return (x - minX) / (maxX - minX) * (WINDOW_WIDTH - 40) + 20;
@@ -349,7 +370,7 @@ void visualize(const vector<Point>& polygon, const vector<Point>& triangles) {
     };
 
     sf::RenderWindow window(sf::VideoMode(WINDOW_WIDTH, WINDOW_HEIGHT), "Triangulation Visualization");
-    
+
     sf::Font font;
     std::string fontPaths[] = {
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -358,7 +379,7 @@ void visualize(const vector<Point>& polygon, const vector<Point>& triangles) {
         "/System/Library/Fonts/Helvetica.ttf",
         "/Windows/Fonts/arial.ttf"
     };
-    
+
     bool fontLoaded = false;
     for (const auto& path : fontPaths) {
         if (font.loadFromFile(path)) {
@@ -400,8 +421,6 @@ void visualize(const vector<Point>& polygon, const vector<Point>& triangles) {
                 sf::Vertex(sf::Vector2f(toScreenX(polygon[i].x), toScreenY(polygon[i].y)), sf::Color::Red),
                 sf::Vertex(sf::Vector2f(toScreenX(polygon[j].x), toScreenY(polygon[j].y)), sf::Color::Red)
             };
-            line[0].color = sf::Color::Red;
-            line[1].color = sf::Color::Red;
             window.draw(line, 2, sf::Lines);
         }
 
@@ -424,11 +443,11 @@ void visualize(const vector<Point>& polygon, const vector<Point>& triangles) {
                 window.draw(text);
             }
         }
-        
+
         if (fontLoaded) {
             sf::Text info;
             info.setFont(font);
-            info.setString("Vertices: " + to_string(polygon.size()) + 
+            info.setString("Vertices: " + to_string(polygon.size()) +
                           "  Triangles: " + to_string(triangles.size() / 3) +
                           "\nESC - exit");
             info.setCharacterSize(16);
@@ -457,10 +476,11 @@ int main(int argc, char* argv[]) {
             return 1;
         }
 
-        vector<Point> triangles = triangulate(polygon);
+        Triangulator triangulator(polygon);
+        vector<Point> triangles = triangulator.triangulate();
         printTriangles(triangles);
         visualize(polygon, triangles);
-        
+
     } catch (const exception& e) {
         cerr << "Ошибка: " << e.what() << endl;
         return 1;
