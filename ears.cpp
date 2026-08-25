@@ -1,7 +1,7 @@
 #include <iostream>
 #include <vector>
 #include <cmath>
-#include <set>
+#include <list>
 #include <sstream>
 #include <SFML/Graphics.hpp>
 
@@ -33,6 +33,7 @@ struct Vertex {
     bool removed;
     bool isConvex;
     bool isEar;
+    list<Vertex*>::iterator earIt;
 
     Vertex(const Point& pt, int idx) : p(pt), index(idx), prev(nullptr), next(nullptr),
                                         removed(false), isConvex(false), isEar(false) {}
@@ -169,9 +170,7 @@ private:
     vector<Vertex*> vertices;
     Vertex* head;
     int remaining;
-    set<Vertex*> convexSet;
-    set<Vertex*> reflexSet;
-    set<Vertex*> earSet;
+    list<Vertex*> earList;
 
     bool isConvex(Vertex* v) {
         return crossProduct(v->prev->p, v->p, v->next->p) >= -EPS;
@@ -193,12 +192,18 @@ private:
         if (v->removed) return;
         v->isConvex = isConvex(v);
         v->isEar = isEar(v);
+    }
 
-        if (v->isEar) {
-            earSet.insert(v);
-        } else {
-            earSet.erase(v);
-        }
+    void addToEarList(Vertex* v) {
+        if (v->removed || !v->isEar) return;
+        earList.push_back(v);
+        v->earIt = --earList.end();
+    }
+
+    void removeFromEarList(Vertex* v) {
+        if (!v->isEar) return;
+        earList.erase(v->earIt);
+        v->isEar = false;
     }
 
     void removeVertex(Vertex* v) {
@@ -209,6 +214,7 @@ private:
         next->prev = prev;
 
         v->removed = true;
+        removeFromEarList(v);
 
         if (head == v) {
             head = next;
@@ -216,27 +222,24 @@ private:
 
         remaining--;
 
+        removeFromEarList(prev);
+        removeFromEarList(next);
+        
         updateVertex(prev);
         updateVertex(next);
+        
+        addToEarList(prev);
+        addToEarList(next);
     }
 
-    void initializeSets() {
+    void initializeEarList() {
         Vertex* current = head;
         for (int i = 0; i < remaining; ++i) {
             current->isConvex = isConvex(current);
-            if (current->isConvex) {
-                convexSet.insert(current);
-            } else {
-                reflexSet.insert(current);
-            }
-            current = current->next;
-        }
-
-        current = head;
-        for (int i = 0; i < remaining; ++i) {
             current->isEar = isEar(current);
             if (current->isEar) {
-                earSet.insert(current);
+                earList.push_back(current);
+                current->earIt = --earList.end();
             }
             current = current->next;
         }
@@ -267,16 +270,16 @@ public:
         vector<Point> triangles;
         if (remaining < 3) return triangles;
 
-        initializeSets();
+        initializeEarList();
 
         while (remaining > 3) {
-            if (earSet.empty()) {
+            if (earList.empty()) {
                 cerr << "Предупреждение: ухо не найдено, завершение" << endl;
                 break;
             }
 
-            Vertex* ear = *earSet.begin();
-            earSet.erase(earSet.begin());
+            Vertex* ear = earList.front();
+            earList.pop_front();
 
             if (ear->removed || !ear->isEar) {
                 continue;
