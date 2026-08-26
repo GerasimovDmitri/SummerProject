@@ -34,7 +34,7 @@ struct Vertex {
     bool isConvex;
     bool isEar;
     list<Vertex*>::iterator earIt;
-    list<Vertex*>::iterator reflexIt;
+    list<Vertex*>::iterator concaveIt;
 
     Vertex(const Point& pt, int idx) : p(pt), index(idx), prev(nullptr), next(nullptr),
                                         removed(false), isConvex(false), isEar(false) {}
@@ -172,7 +172,7 @@ private:
     Vertex* head;
     int remaining;
     list<Vertex*> earList;
-    list<Vertex*> reflexList;
+    list<Vertex*> concaveList;
 
     bool isConvex(Vertex* v) {
         return crossProduct(v->prev->p, v->p, v->next->p) >= -EPS;
@@ -180,29 +180,29 @@ private:
 
     bool isEar(Vertex* v) {
         if (!v->isConvex) return false;
-        Vertex* current = v->next->next;
-        while (current != v->prev) {
-            if (!current->removed && pointInTriangle(current->p, v->prev->p, v->p, v->next->p)) {
+        for (Vertex* concave : concaveList) {
+            if (concave->removed) continue;
+            if (concave == v || concave == v->prev || concave == v->next) continue;
+            if (pointInTriangle(concave->p, v->prev->p, v->p, v->next->p)) {
                 return false;
             }
-            current = current->next;
         }
         return true;
     }
 
     void updateVertex(Vertex* v) {
         if (v->removed) return;
-        
         bool wasConvex = v->isConvex;
         v->isConvex = isConvex(v);
-        v->isEar = isEar(v);
         
-        if (v->isConvex && !wasConvex) {
-            reflexList.erase(v->reflexIt);
-        } else if (!v->isConvex && wasConvex) {
-            reflexList.push_back(v);
-            v->reflexIt = --reflexList.end();
+        if (!v->isConvex && wasConvex) {
+            concaveList.push_back(v);
+            v->concaveIt = --concaveList.end();
+        } else if (v->isConvex && !wasConvex) {
+            concaveList.erase(v->concaveIt);
         }
+        
+        v->isEar = isEar(v);
     }
 
     void addToEarList(Vertex* v) {
@@ -228,7 +228,7 @@ private:
         removeFromEarList(v);
         
         if (!v->isConvex) {
-            reflexList.erase(v->reflexIt);
+            concaveList.erase(v->concaveIt);
         }
 
         if (head == v) {
@@ -251,13 +251,11 @@ private:
         Vertex* current = head;
         for (int i = 0; i < remaining; ++i) {
             current->isConvex = isConvex(current);
-            current->isEar = isEar(current);
-            
             if (!current->isConvex) {
-                reflexList.push_back(current);
-                current->reflexIt = --reflexList.end();
+                concaveList.push_back(current);
+                current->concaveIt = --concaveList.end();
             }
-            
+            current->isEar = isEar(current);
             if (current->isEar) {
                 earList.push_back(current);
                 current->earIt = --earList.end();
